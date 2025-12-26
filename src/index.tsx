@@ -1,5 +1,14 @@
-import { ActionPanel, Action, List, showToast, Toast, open, Icon, Color, Clipboard } from "@raycast/api";
+import { ActionPanel, Action, List, showToast, Toast, open, Icon, Color, Clipboard, LocalStorage } from "@raycast/api";
 import { useState, useEffect, useRef, useCallback } from "react";
+
+// 本地缓存配置
+const CACHE_KEY = "anime-rss-cache";
+const CACHE_MAX_AGE = 30 * 60 * 1000; // 30分钟后视为过期，但仍然优先显示
+
+interface CachedData {
+  items: AnimeItem[];
+  timestamp: number;
+}
 import Parser from "rss-parser";
 
 // 工具函数：判断两个日期是否为同一天（本地时区）
@@ -84,57 +93,102 @@ export default function Command() {
   const initialPrefetchDoneRef = useRef(false);
 
   useEffect(() => {
-    async function fetchFeed() {
+    // 解析 RSS 数据的通用函数
+    const parseRssItems = (feed: Parser.Output<Record<string, unknown>>): AnimeItem[] => {
+      const now = new Date();
+      return feed.items
+        .filter((item) => item.link)
+        .map((item) => {
+          const fullTitle = item.title || "";
+          let animeName = fullTitle;
+          const nameMatch = /^\[.*?\]\s*(.*?)(?:\s-|\[|\()/u.exec(fullTitle);
+          if (nameMatch?.[1]) {
+            animeName = nameMatch[1].trim();
+          }
+          const itemDate = new Date(item.pubDate || 0);
+          return {
+            title: fullTitle,
+            link: item.link || "",
+            pubDate: item.pubDate || "",
+            guid: item.guid,
+            torrentUrl: item.enclosure?.url,
+            animeName: animeName,
+            isToday: isSameLocalDay(itemDate, now),
+          };
+        })
+        .slice(0, 50);
+    };
+
+    // 从网络获取最新数据
+    const fetchFromNetwork = async (): Promise<AnimeItem[] | null> => {
       try {
         const response = await fetch(`${RSS_URL}?t=${Date.now()}`, {
           headers: {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           },
         });
-
         if (!response.ok) throw new Error("Network Error");
-
         const xmlText = await response.text();
         const feed = await parser.parseString(xmlText);
-        
+        return parseRssItems(feed);
+      } catch {
+        return null;
+      }
+    };
+
+    // 保存到本地缓存
+    const saveToCache = async (items: AnimeItem[]) => {
+      const cacheData: CachedData = { items, timestamp: Date.now() };
+      await LocalStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+    };
+
+    // 从本地缓存读取
+    const loadFromCache = async (): Promise<CachedData | null> => {
+      try {
+        const cached = await LocalStorage.getItem<string>(CACHE_KEY);
+        if (cached) {
+          return JSON.parse(cached) as CachedData;
+        }
+      } catch {
+        // 缓存解析失败，忽略
+      }
+      return null;
+    };
+
+    async function initData() {
+      // 1. 先尝试读取本地缓存
+      const cached = await loadFromCache();
+
+      if (cached?.items?.length) {
+        // 有缓存，立即显示（重新计算 isToday）
         const now = new Date();
+        const itemsWithUpdatedDate = cached.items.map(item => ({
+          ...item,
+          isToday: isSameLocalDay(new Date(item.pubDate), now),
+        }));
+        setItems(itemsWithUpdatedDate);
+        setIsLoading(false); // 立即结束 loading 状态
 
-        const parsedItems: AnimeItem[] = feed.items
-          .filter((item) => item.link) // 过滤掉没有 link 的条目
-          .map((item) => {
-            const fullTitle = item.title || "";
-            // 提取纯净的动画名
-            let animeName = fullTitle;
-            const nameMatch = /^\[.*?\]\s*(.*?)(?:\s-|\[|\()/u.exec(fullTitle);
-            if (nameMatch?.[1]) {
-              animeName = nameMatch[1].trim();
-            }
-
-            const itemDate = new Date(item.pubDate || 0);
-
-            return {
-              title: fullTitle,
-              link: item.link || "",
-              pubDate: item.pubDate || "",
-              guid: item.guid,
-              torrentUrl: item.enclosure?.url,
-              animeName: animeName,
-              isToday: isSameLocalDay(itemDate, now),
-            };
-          });
-
-        // 截取前 50 条，避免列表过长
-        setItems(parsedItems.slice(0, 50));
-        setIsLoading(false);
-
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "请检查网络";
-        showToast({ style: Toast.Style.Failure, title: "RSS 获取失败", message });
+        // 2. 后台静默刷新（不显示 loading）
+        const freshItems = await fetchFromNetwork();
+        if (freshItems) {
+          setItems(freshItems);
+          await saveToCache(freshItems);
+        }
+      } else {
+        // 没有缓存，显示 loading 并获取数据
+        const freshItems = await fetchFromNetwork();
+        if (freshItems) {
+          setItems(freshItems);
+          await saveToCache(freshItems);
+        } else {
+          showToast({ style: Toast.Style.Failure, title: "RSS 获取失败", message: "请检查网络" });
+        }
         setIsLoading(false);
       }
     }
 
-    fetchFeed();
+    initData();
   }, []);
 
   // 同步 itemsRef，防止闭包读取旧值
