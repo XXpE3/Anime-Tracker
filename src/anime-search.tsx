@@ -10,7 +10,7 @@ import {
   Clipboard,
   open,
 } from "@raycast/api";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Parser from "rss-parser";
 
 import {
@@ -23,8 +23,9 @@ import {
   decodeHtmlEntities,
   extractFileSize,
   extractSubGroup,
-  MAGNET_PATTERN,
   SEARCH_RESULT_PATTERN,
+  useMagnetCache,
+  useStagedItems,
 } from "./lib";
 import { buildDetailMarkdown } from "./components/DetailMarkdown";
 
@@ -141,7 +142,6 @@ interface BangumiDetailProps {
 function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
   const [items, setItems] = useState<BangumiItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [stagedItems, setStagedItems] = useState<BangumiItem[]>([]);
   const [selectedSubGroup, setSelectedSubGroup] = useState<string>("all");
 
   const subGroups = [...new Set(items.map((item) => extractSubGroup(item.title)))];
@@ -151,8 +151,9 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
       ? items
       : items.filter((item) => extractSubGroup(item.title) === selectedSubGroup);
 
-  const magnetCacheRef = useRef<Record<string, string | null>>({});
-  const pendingRef = useRef<Set<string>>(new Set());
+  const { getMagnetLink } = useMagnetCache();
+  const { stagedItems, handleStage, handleUnstage, handleCopyAllMagnets, isStaged } =
+    useStagedItems<BangumiItem>(getMagnetLink);
 
   useEffect(() => {
     async function fetchRss() {
@@ -196,36 +197,6 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
     fetchRss();
   }, [id]);
 
-  const getMagnetLink = useCallback(async (detailUrl: string): Promise<string | null> => {
-    if (magnetCacheRef.current[detailUrl] !== undefined) {
-      return magnetCacheRef.current[detailUrl];
-    }
-
-    if (pendingRef.current.has(detailUrl)) {
-      return null;
-    }
-
-    pendingRef.current.add(detailUrl);
-
-    try {
-      const response = await fetch(detailUrl);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const html = await response.text();
-
-      const match = MAGNET_PATTERN.exec(html);
-      const magnet = match ? decodeHtmlEntities(match[0]) : null;
-
-      magnetCacheRef.current[detailUrl] = magnet;
-      return magnet;
-    } catch (error) {
-      console.error("Failed to get magnet link:", error);
-      magnetCacheRef.current[detailUrl] = null;
-      return null;
-    } finally {
-      pendingRef.current.delete(detailUrl);
-    }
-  }, []);
-
   const handleAction = useCallback(
     async (item: BangumiItem, mode: ActionMode) => {
       const toast = await showToast({ style: Toast.Style.Animated, title: "解析磁力链..." });
@@ -260,56 +231,6 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
 
   const getItemKey = (item: BangumiItem): string => item.guid ?? item.link;
 
-  const handleStage = useCallback((item: BangumiItem) => {
-    setStagedItems((prev) => {
-      if (prev.some((i) => getItemKey(i) === getItemKey(item))) {
-        showToast({ style: Toast.Style.Failure, title: "已在暂存列表中" });
-        return prev;
-      }
-      showToast({ style: Toast.Style.Success, title: "已加入暂存" });
-      return [...prev, item];
-    });
-  }, []);
-
-  const handleUnstage = useCallback((item: BangumiItem) => {
-    setStagedItems((prev) => prev.filter((i) => getItemKey(i) !== getItemKey(item)));
-    showToast({ style: Toast.Style.Success, title: "已从暂存移除" });
-  }, []);
-
-  const handleCopyAllMagnets = useCallback(async () => {
-    if (stagedItems.length === 0) {
-      await showToast({ style: Toast.Style.Failure, title: "没有暂存的项目" });
-      return;
-    }
-
-    const toast = await showToast({
-      style: Toast.Style.Animated,
-      title: `正在获取 ${stagedItems.length} 个磁力链...`,
-    });
-
-    const magnets: string[] = [];
-    for (const item of stagedItems) {
-      const magnet = await getMagnetLink(item.link);
-      if (magnet) magnets.push(magnet);
-    }
-
-    toast.hide();
-
-    if (magnets.length === 0) {
-      await showToast({ style: Toast.Style.Failure, title: "未找到任何磁力链" });
-      return;
-    }
-
-    await Clipboard.copy(magnets.join("\n"));
-    await showToast({
-      style: Toast.Style.Success,
-      title: `已复制 ${magnets.length} 个磁力链`,
-      message: "暂存已清空",
-    });
-
-    setStagedItems([]);
-  }, [stagedItems, getMagnetLink]);
-
   return (
     <List
       navigationTitle={name}
@@ -339,7 +260,7 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
               coverUrl={coverUrl}
               animeName={name}
               onAction={handleAction}
-              onUnstage={handleUnstage}
+              onUnstage={() => handleUnstage(item)}
               onCopyAll={handleCopyAllMagnets}
               stagedCount={stagedItems.length}
             />
@@ -355,8 +276,8 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
             coverUrl={coverUrl}
             animeName={name}
             onAction={handleAction}
-            onStage={handleStage}
-            isStaged={stagedItems.some((s) => getItemKey(s) === getItemKey(item))}
+            onStage={() => handleStage(item)}
+            isStaged={isStaged(item)}
             onCopyAll={handleCopyAllMagnets}
             stagedCount={stagedItems.length}
           />
@@ -371,7 +292,7 @@ interface ResourceListItemProps {
   coverUrl: string;
   animeName: string;
   onAction: (item: BangumiItem, mode: ActionMode) => Promise<void>;
-  onStage: (item: BangumiItem) => void;
+  onStage: () => void;
   isStaged: boolean;
   onCopyAll: () => Promise<void>;
   stagedCount: number;
@@ -431,7 +352,7 @@ function ResourceListItem({
                 title="加入暂存"
                 icon={Icon.Plus}
                 shortcut={{ modifiers: ["cmd"], key: "s" }}
-                onAction={() => onStage(item)}
+                onAction={onStage}
               />
             )}
           </ActionPanel.Section>
@@ -466,7 +387,7 @@ interface StagedListItemProps {
   coverUrl: string;
   animeName: string;
   onAction: (item: BangumiItem, mode: ActionMode) => Promise<void>;
-  onUnstage: (item: BangumiItem) => void;
+  onUnstage: () => void;
   onCopyAll: () => Promise<void>;
   stagedCount: number;
 }
@@ -526,7 +447,7 @@ function StagedListItem({
               title="从暂存移除"
               icon={Icon.Minus}
               shortcut={{ modifiers: ["cmd"], key: "d" }}
-              onAction={() => onUnstage(item)}
+              onAction={onUnstage}
             />
           </ActionPanel.Section>
           <ActionPanel.Section title="单项操作">

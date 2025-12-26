@@ -19,6 +19,8 @@ import {
   MAGNET_HREF_PATTERN,
   COVER_PATTERN,
   DETAIL_FILE_SIZE_PATTERN,
+  MAGNET_PATTERN,
+  useStagedItems,
 } from "./lib";
 import { buildDetailMarkdown } from "./components/DetailMarkdown";
 
@@ -27,7 +29,6 @@ const parser = new Parser();
 export default function Command() {
   const [items, setItems] = useState<AnimeItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [stagedItems, setStagedItems] = useState<AnimeItem[]>([]);
 
   // 用于缓存详情页数据，防止重复请求
   const cacheRef = useRef<Record<string, DetailCache>>({});
@@ -41,6 +42,46 @@ export default function Command() {
   const handleSelectionChangeRef = useRef<((itemId: string | null) => Promise<void>) | null>(null);
   // 用于标记是否已完成初始预取
   const initialPrefetchDoneRef = useRef(false);
+
+  // 获取磁力链的函数，优先从缓存获取
+  const getMagnetLinkWithCache = useCallback(async (detailUrl: string): Promise<string | null> => {
+    // 优先从缓存获取
+    const cached = cacheRef.current[detailUrl];
+    if (cached?.magnet !== undefined) {
+      return cached.magnet;
+    }
+
+    // 从网络获取
+    try {
+      const response = await fetch(detailUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const html = await response.text();
+
+      const match = MAGNET_PATTERN.exec(html);
+      const magnet = match ? decodeHtmlEntities(match[0]) : null;
+
+      // 更新缓存
+      if (cached) {
+        cached.magnet = magnet;
+      } else {
+        cacheRef.current[detailUrl] = { magnet };
+      }
+
+      return magnet;
+    } catch (error) {
+      console.error("Failed to get magnet link:", error);
+      if (cached) {
+        cached.magnet = null;
+      } else {
+        cacheRef.current[detailUrl] = { magnet: null };
+      }
+      return null;
+    }
+  }, []);
+
+  // 使用 useStagedItems hook
+  const { stagedItems, handleStage, handleUnstage, handleCopyAllMagnets, isStaged } =
+    useStagedItems<AnimeItem>(getMagnetLinkWithCache);
 
   useEffect(() => {
     const parseRssItems = (feed: Parser.Output<Record<string, unknown>>): AnimeItem[] => {
@@ -195,115 +236,39 @@ export default function Command() {
     }
   }, [items]);
 
-  const getMagnetLink = async (detailUrl: string): Promise<string | null> => {
-    try {
-      const response = await fetch(detailUrl);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const html = await response.text();
-      const magnetRegex = /magnet:\?xt=urn:btih:[a-zA-Z0-9]{32,40}[^"'<\s]*/u;
-      const match = magnetRegex.exec(html);
-      return match ? match[0] : null;
-    } catch (error: unknown) {
-      console.error("Failed to get magnet link:", error instanceof Error ? error.message : error);
-      return null;
-    }
-  };
-
-  const handleAction = async (item: AnimeItem, mode: ActionMode) => {
-    const cached = cacheRef.current[item.link];
-    let magnet = cached?.magnet;
-
-    if (magnet === undefined) {
+  const handleAction = useCallback(
+    async (item: AnimeItem, mode: ActionMode) => {
       const toast = await showToast({ style: Toast.Style.Animated, title: "解析磁力链..." });
-      magnet = await getMagnetLink(item.link);
-      if (cached) {
-        cached.magnet = magnet;
-      } else {
-        cacheRef.current[item.link] = { magnet };
-      }
+      const magnet = await getMagnetLinkWithCache(item.link);
       toast.hide();
-    }
 
-    if (!magnet) {
-      if (item.torrentUrl && mode === "download") {
-        open(item.torrentUrl);
-        await showToast({ style: Toast.Style.Success, title: "已下载种子" });
+      if (!magnet) {
+        if (item.torrentUrl && mode === "download") {
+          open(item.torrentUrl);
+          await showToast({ style: Toast.Style.Success, title: "已下载种子" });
+          return;
+        }
+        open(item.link);
+        await showToast({ style: Toast.Style.Failure, title: "直接打开网页" });
         return;
       }
-      open(item.link);
-      await showToast({ style: Toast.Style.Failure, title: "直接打开网页" });
-      return;
-    }
 
-    if (mode === "browser_pikpak") {
-      await Clipboard.copy(magnet);
-      await open(item.link);
-      await showToast({ style: Toast.Style.Success, title: "复制成功 & 打开网页" });
-    } else if (mode === "download") {
-      open(magnet);
-      await showToast({ style: Toast.Style.Success, title: "已唤起下载" });
-    } else {
-      await Clipboard.copy(magnet);
-      await showToast({ style: Toast.Style.Success, title: "已复制" });
-    }
-  };
+      if (mode === "browser_pikpak") {
+        await Clipboard.copy(magnet);
+        await open(item.link);
+        await showToast({ style: Toast.Style.Success, title: "复制成功 & 打开网页" });
+      } else if (mode === "download") {
+        open(magnet);
+        await showToast({ style: Toast.Style.Success, title: "已唤起下载" });
+      } else {
+        await Clipboard.copy(magnet);
+        await showToast({ style: Toast.Style.Success, title: "已复制" });
+      }
+    },
+    [getMagnetLinkWithCache]
+  );
 
   const getItemKey = (item: AnimeItem): string => item.guid ?? item.link;
-
-  const handleStage = useCallback((item: AnimeItem) => {
-    setStagedItems((prev) => {
-      if (prev.some((i) => getItemKey(i) === getItemKey(item))) {
-        showToast({ style: Toast.Style.Failure, title: "已在暂存列表中" });
-        return prev;
-      }
-      showToast({ style: Toast.Style.Success, title: "已加入暂存" });
-      return [...prev, item];
-    });
-  }, []);
-
-  const handleUnstage = useCallback((item: AnimeItem) => {
-    setStagedItems((prev) => prev.filter((i) => getItemKey(i) !== getItemKey(item)));
-    showToast({ style: Toast.Style.Success, title: "已从暂存移除" });
-  }, []);
-
-  const handleCopyAllMagnets = useCallback(async () => {
-    if (stagedItems.length === 0) {
-      await showToast({ style: Toast.Style.Failure, title: "没有暂存的项目" });
-      return;
-    }
-
-    const toast = await showToast({ style: Toast.Style.Animated, title: `正在获取 ${stagedItems.length} 个磁力链...` });
-    const magnets: string[] = [];
-
-    for (const item of stagedItems) {
-      const cached = cacheRef.current[item.link];
-      let magnet = cached?.magnet;
-
-      if (magnet === undefined) {
-        magnet = await getMagnetLink(item.link);
-        if (cached) cached.magnet = magnet;
-        else cacheRef.current[item.link] = { magnet };
-      }
-
-      if (magnet) magnets.push(magnet);
-    }
-
-    toast.hide();
-
-    if (magnets.length === 0) {
-      await showToast({ style: Toast.Style.Failure, title: "未找到任何磁力链" });
-      return;
-    }
-
-    await Clipboard.copy(magnets.join("\n"));
-    await showToast({
-      style: Toast.Style.Success,
-      title: `已复制 ${magnets.length} 个磁力链`,
-      message: "暂存已清空",
-    });
-
-    setStagedItems([]);
-  }, [stagedItems]);
 
   const todayItems = items.filter((i) => i.isToday);
   const otherItems = items.filter((i) => !i.isToday);
@@ -317,7 +282,7 @@ export default function Command() {
               key={`staged-${getItemKey(item)}`}
               item={item}
               onAction={handleAction}
-              onUnstage={handleUnstage}
+              onUnstage={() => handleUnstage(item)}
               onCopyAll={handleCopyAllMagnets}
               stagedCount={stagedItems.length}
             />
@@ -331,8 +296,8 @@ export default function Command() {
             key={getItemKey(item)}
             item={item}
             onAction={handleAction}
-            onStage={handleStage}
-            isStaged={stagedItems.some((s) => getItemKey(s) === getItemKey(item))}
+            onStage={() => handleStage(item)}
+            isStaged={isStaged(item)}
             onCopyAll={handleCopyAllMagnets}
             stagedCount={stagedItems.length}
           />
@@ -345,8 +310,8 @@ export default function Command() {
             key={getItemKey(item)}
             item={item}
             onAction={handleAction}
-            onStage={handleStage}
-            isStaged={stagedItems.some((s) => getItemKey(s) === getItemKey(item))}
+            onStage={() => handleStage(item)}
+            isStaged={isStaged(item)}
             onCopyAll={handleCopyAllMagnets}
             stagedCount={stagedItems.length}
           />
@@ -359,7 +324,7 @@ export default function Command() {
 interface AnimeListItemProps {
   item: AnimeItem;
   onAction: (item: AnimeItem, mode: ActionMode) => Promise<void>;
-  onStage: (item: AnimeItem) => void;
+  onStage: () => void;
   isStaged: boolean;
   onCopyAll: () => Promise<void>;
   stagedCount: number;
@@ -402,7 +367,7 @@ function AnimeListItem({ item, onAction, onStage, isStaged, onCopyAll, stagedCou
                 title="加入暂存"
                 icon={Icon.Plus}
                 shortcut={{ modifiers: ["cmd"], key: "s" }}
-                onAction={() => onStage(item)}
+                onAction={onStage}
               />
             )}
           </ActionPanel.Section>
@@ -427,7 +392,7 @@ function AnimeListItem({ item, onAction, onStage, isStaged, onCopyAll, stagedCou
 interface StagedListItemProps {
   item: AnimeItem;
   onAction: (item: AnimeItem, mode: ActionMode) => Promise<void>;
-  onUnstage: (item: AnimeItem) => void;
+  onUnstage: () => void;
   onCopyAll: () => Promise<void>;
   stagedCount: number;
 }
@@ -473,7 +438,7 @@ function StagedListItem({ item, onAction, onUnstage, onCopyAll, stagedCount }: R
               title="从暂存移除"
               icon={Icon.Minus}
               shortcut={{ modifiers: ["cmd"], key: "d" }}
-              onAction={() => onUnstage(item)}
+              onAction={onUnstage}
             />
           </ActionPanel.Section>
           <ActionPanel.Section title="单项操作">
