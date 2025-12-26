@@ -1,3 +1,4 @@
+import React, { useState, useEffect, useCallback } from "react";
 import {
   ActionPanel,
   Action,
@@ -10,7 +11,6 @@ import {
   Clipboard,
   open,
 } from "@raycast/api";
-import { useState, useEffect, useCallback } from "react";
 import Parser from "rss-parser";
 
 import {

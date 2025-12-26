@@ -1,3 +1,4 @@
+import React from "react";
 import { ActionPanel, Action, Icon } from "@raycast/api";
 import { useStagedContext } from "../lib";
 
@@ -55,7 +56,7 @@ export function AnimeActions({ actions, staging }: Readonly<AnimeActionsProps>) 
               <Action
                 title="发送到 PikPak"
                 icon={Icon.Cloud}
-                shortcut={{ modifiers: ["cmd"], key: "p" }}
+                shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
                 onAction={actions.onSendToPikPak}
               />
             )}
@@ -72,7 +73,7 @@ export function AnimeActions({ actions, staging }: Readonly<AnimeActionsProps>) 
               <Action
                 title="发送到 PikPak"
                 icon={Icon.Cloud}
-                shortcut={{ modifiers: ["cmd"], key: "p" }}
+                shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
                 onAction={actions.onSendToPikPak}
               />
             )}

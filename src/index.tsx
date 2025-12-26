@@ -1,5 +1,5 @@
+import React, { useCallback } from "react";
 import { List, showToast, Toast, open, Icon, Color, Clipboard } from "@raycast/api";
-import { useCallback } from "react";
 
 import {
   type AnimeItem,

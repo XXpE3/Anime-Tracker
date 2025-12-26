@@ -1,5 +1,5 @@
+import React, { useState, useEffect, useCallback } from "react";
 import { List, ActionPanel, Action, showToast, Toast, Icon, Color, open, Clipboard } from "@raycast/api";
-import { useState, useEffect, useCallback } from "react";
 import { usePikPak } from "./lib/hooks";
 import { type OfflineTask, hasCredentials } from "./lib/pikpak";
 
@@ -142,6 +142,45 @@ export default function PikPakCommand() {
     [client]
   );
 
+  // 使用 IINA 播放
+  const handlePlayWithIINA = useCallback(
+    async (fileId: string) => {
+      if (!client) return;
+
+      try {
+        await showToast({ style: Toast.Style.Animated, title: "获取播放链接..." });
+        const fileInfo = await client.getDownloadUrl(fileId);
+
+        const downloadUrl = fileInfo.web_content_link || fileInfo.medias?.[0]?.link?.url;
+
+        if (downloadUrl) {
+          await showToast({ style: Toast.Style.Animated, title: "启动 IINA..." });
+
+          // 使用 IINA 的 URL scheme 打开，这是更可靠的方式
+          const iinaUrl = `iina://weblink?url=${encodeURIComponent(downloadUrl)}`;
+          await open(iinaUrl);
+
+          await showToast({
+            style: Toast.Style.Success,
+            title: "已启动 IINA 播放",
+          });
+        } else {
+          await showToast({
+            style: Toast.Style.Failure,
+            title: "未找到播放链接",
+          });
+        }
+      } catch (error) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "播放失败",
+          message: error instanceof Error ? error.message : "未知错误",
+        });
+      }
+    },
+    [client]
+  );
+
   // 打开 PikPak 网页
   const handleOpenPikPak = useCallback(async () => {
     await open("https://mypikpak.com");
@@ -208,6 +247,7 @@ export default function PikPakCommand() {
                   onDelete={handleDeleteTask}
                   onRetry={handleRetryTask}
                   onGetDownloadUrl={handleGetDownloadUrl}
+                  onPlayWithIINA={handlePlayWithIINA}
                   onRefresh={loadTasks}
                 />
               ))}
@@ -223,6 +263,7 @@ export default function PikPakCommand() {
                   onDelete={handleDeleteTask}
                   onRetry={handleRetryTask}
                   onGetDownloadUrl={handleGetDownloadUrl}
+                  onPlayWithIINA={handlePlayWithIINA}
                   onRefresh={loadTasks}
                 />
               ))}
@@ -238,6 +279,7 @@ export default function PikPakCommand() {
                   onDelete={handleDeleteTask}
                   onRetry={handleRetryTask}
                   onGetDownloadUrl={handleGetDownloadUrl}
+                  onPlayWithIINA={handlePlayWithIINA}
                   onRefresh={loadTasks}
                 />
               ))}
@@ -253,10 +295,11 @@ interface TaskListItemProps {
   onDelete: (taskId: string) => void;
   onRetry: (taskId: string) => void;
   onGetDownloadUrl: (fileId: string) => void;
+  onPlayWithIINA: (fileId: string) => void;
   onRefresh: () => void;
 }
 
-function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onRefresh }: Readonly<TaskListItemProps>) {
+function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onPlayWithIINA, onRefresh }: Readonly<TaskListItemProps>) {
   const getStatusIcon = () => {
     switch (task.phase) {
       case "PHASE_TYPE_RUNNING":
@@ -304,12 +347,19 @@ function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onRefresh }: 
         <ActionPanel>
           <ActionPanel.Section title="任务操作">
             {task.phase === "PHASE_TYPE_COMPLETE" && task.file_id && (
-              <Action
-                title="获取下载链接"
-                icon={Icon.Link}
-                shortcut={{ modifiers: ["cmd"], key: "l" }}
-                onAction={() => onGetDownloadUrl(task.file_id!)}
-              />
+              <>
+                <Action
+                  title="使用 IINA 播放"
+                  icon={Icon.Play}
+                  onAction={() => onPlayWithIINA(task.file_id!)}
+                />
+                <Action
+                  title="获取下载链接"
+                  icon={Icon.Link}
+                  shortcut={{ modifiers: ["cmd"], key: "l" }}
+                  onAction={() => onGetDownloadUrl(task.file_id!)}
+                />
+              </>
             )}
             {task.phase === "PHASE_TYPE_ERROR" && (
               <Action
