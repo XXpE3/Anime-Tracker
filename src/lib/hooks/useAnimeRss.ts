@@ -6,11 +6,13 @@ import { type AnimeItem, type CachedData } from "../types";
 import { RSS_URL, CACHE_KEY, MAX_ITEMS, USER_AGENT } from "../constants";
 import { isSameLocalDay } from "../utils";
 import { ANIME_NAME_PATTERN } from "../patterns";
+import { isValidCachedData } from "../guards";
 
 const parser = new Parser();
 
 interface UseAnimeRssReturn {
   items: AnimeItem[];
+  setItems: React.Dispatch<React.SetStateAction<AnimeItem[]>>;
   isLoading: boolean;
   refresh: () => Promise<void>;
 }
@@ -67,11 +69,15 @@ export function useAnimeRss(): UseAnimeRssReturn {
     await LocalStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
   };
 
-  const loadFromCache = async (): Promise<CachedData | null> => {
+  const loadFromCache = async (): Promise<{ items: AnimeItem[]; timestamp: number } | null> => {
     try {
       const cached = await LocalStorage.getItem<string>(CACHE_KEY);
       if (cached) {
-        return JSON.parse(cached) as CachedData;
+        const parsed: unknown = JSON.parse(cached);
+        if (isValidCachedData(parsed)) {
+          return parsed;
+        }
+        console.warn("Invalid cache data structure");
       }
     } catch (error) {
       console.warn("Cache parse failed:", error);
@@ -124,5 +130,5 @@ export function useAnimeRss(): UseAnimeRssReturn {
     initData();
   }, []);
 
-  return { items, isLoading, refresh };
+  return { items, setItems, isLoading, refresh };
 }

@@ -44,6 +44,7 @@ export {
   isValidBangumiItem,
   isNonEmptyString,
   isValidUrl,
+  isValidCachedData,
 } from "./guards";
 
 // Context

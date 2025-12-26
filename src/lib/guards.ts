@@ -1,4 +1,4 @@
-import { type AnimeItem, type BangumiItem, type BaseItem } from "./types";
+import { type AnimeItem, type BangumiItem, type BaseItem, type CachedData } from "./types";
 
 /**
  * 检查是否为有效的基础资源项
@@ -52,4 +52,18 @@ export function isValidUrl(value: unknown): value is string {
   } catch {
     return false;
   }
+}
+
+/**
+ * 检查是否为有效的缓存数据
+ */
+export function isValidCachedData(data: unknown): data is CachedData {
+  if (typeof data !== "object" || data === null) return false;
+  if (!("items" in data) || !("timestamp" in data)) return false;
+
+  const candidate = data as { items: unknown; timestamp: unknown };
+  if (!Array.isArray(candidate.items)) return false;
+  if (typeof candidate.timestamp !== "number") return false;
+
+  return candidate.items.every(isValidAnimeItem);
 }

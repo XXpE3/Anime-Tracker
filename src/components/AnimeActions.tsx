@@ -1,4 +1,5 @@
 import { ActionPanel, Action, Icon } from "@raycast/api";
+import { useStagedContext } from "../lib";
 
 interface AnimeActionsProps {
   onBrowserPikpak: () => void;
@@ -6,9 +7,7 @@ interface AnimeActionsProps {
   onCopy: () => void;
   onStage?: () => void;
   onUnstage?: () => void;
-  onCopyAll: () => void;
   isStaged: boolean;
-  stagedCount: number;
 }
 
 /**
@@ -21,10 +20,10 @@ export function AnimeActions({
   onCopy,
   onStage,
   onUnstage,
-  onCopyAll,
   isStaged,
-  stagedCount,
 }: Readonly<AnimeActionsProps>) {
+  const { stagedCount, onCopyAll } = useStagedContext();
+
   return (
     <ActionPanel>
       {isStaged ? (

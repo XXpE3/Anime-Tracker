@@ -26,8 +26,10 @@ import {
   SEARCH_RESULT_PATTERN,
   useMagnetCache,
   useStagedItems,
+  StagedContext,
 } from "./lib";
 import { buildDetailMarkdown } from "./components/DetailMarkdown";
+import { AnimeActions } from "./components/AnimeActions";
 
 const parser = new Parser();
 
@@ -232,88 +234,83 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
   const getItemKey = (item: BangumiItem): string => item.guid ?? item.link;
 
   return (
-    <List
-      navigationTitle={name}
-      isLoading={isLoading}
-      isShowingDetail
-      searchBarAccessory={
-        <List.Dropdown
-          tooltip="按字幕组过滤 (⌘P)"
-          value={selectedSubGroup}
-          onChange={setSelectedSubGroup}
-        >
-          <List.Dropdown.Item title="全部字幕组" value="all" />
-          <List.Dropdown.Section title="字幕组">
-            {subGroups.map((group) => (
-              <List.Dropdown.Item key={group} title={group} value={group} />
+    <StagedContext.Provider value={{ stagedCount: stagedItems.length, onCopyAll: handleCopyAllMagnets }}>
+      <List
+        navigationTitle={name}
+        isLoading={isLoading}
+        isShowingDetail
+        searchBarAccessory={
+          <List.Dropdown
+            tooltip="按字幕组过滤 (⌘P)"
+            value={selectedSubGroup}
+            onChange={setSelectedSubGroup}
+          >
+            <List.Dropdown.Item title="全部字幕组" value="all" />
+            <List.Dropdown.Section title="字幕组">
+              {subGroups.map((group) => (
+                <List.Dropdown.Item key={group} title={group} value={group} />
+              ))}
+            </List.Dropdown.Section>
+          </List.Dropdown>
+        }
+      >
+        {stagedItems.length > 0 && (
+          <List.Section title="📦 暂存列表" subtitle={`${stagedItems.length} 项`}>
+            {stagedItems.map((item) => (
+              <StagedListItem
+                key={`staged-${getItemKey(item)}`}
+                item={item}
+                bangumiInfo={{ coverUrl, animeName: name }}
+                onAction={handleAction}
+                onUnstage={() => handleUnstage(item)}
+              />
             ))}
-          </List.Dropdown.Section>
-        </List.Dropdown>
-      }
-    >
-      {stagedItems.length > 0 && (
-        <List.Section title="📦 暂存列表" subtitle={`${stagedItems.length} 项`}>
-          {stagedItems.map((item) => (
-            <StagedListItem
-              key={`staged-${getItemKey(item)}`}
+          </List.Section>
+        )}
+
+        <List.Section title="📺 资源列表" subtitle={`${filteredItems.length} 个资源`}>
+          {filteredItems.map((item) => (
+            <ResourceListItem
+              key={getItemKey(item)}
               item={item}
-              coverUrl={coverUrl}
-              animeName={name}
+              bangumiInfo={{ coverUrl, animeName: name }}
               onAction={handleAction}
-              onUnstage={() => handleUnstage(item)}
-              onCopyAll={handleCopyAllMagnets}
-              stagedCount={stagedItems.length}
+              onStage={() => handleStage(item)}
+              isStaged={isStaged(item)}
             />
           ))}
         </List.Section>
-      )}
-
-      <List.Section title="📺 资源列表" subtitle={`${filteredItems.length} 个资源`}>
-        {filteredItems.map((item) => (
-          <ResourceListItem
-            key={getItemKey(item)}
-            item={item}
-            coverUrl={coverUrl}
-            animeName={name}
-            onAction={handleAction}
-            onStage={() => handleStage(item)}
-            isStaged={isStaged(item)}
-            onCopyAll={handleCopyAllMagnets}
-            stagedCount={stagedItems.length}
-          />
-        ))}
-      </List.Section>
-    </List>
+      </List>
+    </StagedContext.Provider>
   );
+}
+
+interface BangumiInfo {
+  coverUrl: string;
+  animeName: string;
 }
 
 interface ResourceListItemProps {
   item: BangumiItem;
-  coverUrl: string;
-  animeName: string;
+  bangumiInfo: BangumiInfo;
   onAction: (item: BangumiItem, mode: ActionMode) => Promise<void>;
   onStage: () => void;
   isStaged: boolean;
-  onCopyAll: () => Promise<void>;
-  stagedCount: number;
 }
 
 function ResourceListItem({
   item,
-  coverUrl,
-  animeName,
+  bangumiInfo,
   onAction,
   onStage,
   isStaged,
-  onCopyAll,
-  stagedCount,
 }: Readonly<ResourceListItemProps>) {
   const fileSize = extractFileSize(item.description || item.title);
   const subGroup = extractSubGroup(item.title);
 
   const detailMarkdown = buildDetailMarkdown({
-    coverUrl,
-    animeName,
+    coverUrl: bangumiInfo.coverUrl,
+    animeName: bangumiInfo.animeName,
     pubDate: item.pubDate,
     fileSize,
     title: item.title,
@@ -340,43 +337,13 @@ function ResourceListItem({
         />
       }
       actions={
-        <ActionPanel>
-          <ActionPanel.Section title="推荐操作">
-            <Action
-              title="Chrome / PikPak 播放"
-              icon={Icon.Globe}
-              onAction={() => onAction(item, "browser_pikpak")}
-            />
-            {!isStaged && (
-              <Action
-                title="加入暂存"
-                icon={Icon.Plus}
-                shortcut={{ modifiers: ["cmd"], key: "s" }}
-                onAction={onStage}
-              />
-            )}
-          </ActionPanel.Section>
-          <ActionPanel.Section title="其他">
-            <Action
-              title="本地下载"
-              icon={Icon.Download}
-              onAction={() => onAction(item, "download")}
-            />
-            <Action
-              title="复制磁力链"
-              icon={Icon.Clipboard}
-              onAction={() => onAction(item, "copy")}
-            />
-          </ActionPanel.Section>
-          <ActionPanel.Section title="暂存">
-            <Action
-              title={stagedCount > 0 ? `复制全部 ${stagedCount} 个磁力链` : "复制全部磁力链"}
-              icon={Icon.Clipboard}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
-              onAction={onCopyAll}
-            />
-          </ActionPanel.Section>
-        </ActionPanel>
+        <AnimeActions
+          onBrowserPikpak={() => onAction(item, "browser_pikpak")}
+          onDownload={() => onAction(item, "download")}
+          onCopy={() => onAction(item, "copy")}
+          onStage={isStaged ? undefined : onStage}
+          isStaged={isStaged}
+        />
       }
     />
   );
@@ -384,29 +351,23 @@ function ResourceListItem({
 
 interface StagedListItemProps {
   item: BangumiItem;
-  coverUrl: string;
-  animeName: string;
+  bangumiInfo: BangumiInfo;
   onAction: (item: BangumiItem, mode: ActionMode) => Promise<void>;
   onUnstage: () => void;
-  onCopyAll: () => Promise<void>;
-  stagedCount: number;
 }
 
 function StagedListItem({
   item,
-  coverUrl,
-  animeName,
+  bangumiInfo,
   onAction,
   onUnstage,
-  onCopyAll,
-  stagedCount,
 }: Readonly<StagedListItemProps>) {
   const fileSize = extractFileSize(item.description || item.title);
   const subGroup = extractSubGroup(item.title);
 
   const detailMarkdown = buildDetailMarkdown({
-    coverUrl,
-    animeName,
+    coverUrl: bangumiInfo.coverUrl,
+    animeName: bangumiInfo.animeName,
     pubDate: item.pubDate,
     fileSize,
     title: item.title,
@@ -435,39 +396,13 @@ function StagedListItem({
         />
       }
       actions={
-        <ActionPanel>
-          <ActionPanel.Section title="暂存操作">
-            <Action
-              title={`复制全部 ${stagedCount} 个磁力链`}
-              icon={Icon.Clipboard}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
-              onAction={onCopyAll}
-            />
-            <Action
-              title="从暂存移除"
-              icon={Icon.Minus}
-              shortcut={{ modifiers: ["cmd"], key: "d" }}
-              onAction={onUnstage}
-            />
-          </ActionPanel.Section>
-          <ActionPanel.Section title="单项操作">
-            <Action
-              title="Chrome / PikPak 播放"
-              icon={Icon.Globe}
-              onAction={() => onAction(item, "browser_pikpak")}
-            />
-            <Action
-              title="本地下载"
-              icon={Icon.Download}
-              onAction={() => onAction(item, "download")}
-            />
-            <Action
-              title="复制磁力链"
-              icon={Icon.Clipboard}
-              onAction={() => onAction(item, "copy")}
-            />
-          </ActionPanel.Section>
-        </ActionPanel>
+        <AnimeActions
+          onBrowserPikpak={() => onAction(item, "browser_pikpak")}
+          onDownload={() => onAction(item, "download")}
+          onCopy={() => onAction(item, "copy")}
+          onUnstage={onUnstage}
+          isStaged={true}
+        />
       }
     />
   );
