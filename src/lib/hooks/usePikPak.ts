@@ -85,11 +85,14 @@ export function usePikPak(): UsePikPakReturn {
         message: "已连接到 PikPak",
       });
     } catch (err) {
-      const errorMessage = err instanceof PikPakAuthError 
-        ? "用户名或密码错误" 
-        : err instanceof Error 
-          ? err.message 
-          : "登录失败";
+      let errorMessage: string;
+      if (err instanceof PikPakAuthError) {
+        errorMessage = "用户名或密码错误";
+      } else if (err instanceof Error) {
+        errorMessage = err.message;
+      } else {
+        errorMessage = "登录失败";
+      }
       
       setError(errorMessage);
       setIsLoggedIn(false);

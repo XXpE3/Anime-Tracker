@@ -53,5 +53,5 @@ export const DEFAULT_TIMEOUT = 10000;
 export const DEFAULT_MAX_RETRIES = 3;
 
 /** 默认初始退避时间（秒） */
-export const DEFAULT_INITIAL_BACKOFF = 3.0;
+export const DEFAULT_INITIAL_BACKOFF = 3;
 

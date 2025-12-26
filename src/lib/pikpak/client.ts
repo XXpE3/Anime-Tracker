@@ -45,8 +45,8 @@ export class PikPakClient {
   private userId: string | null = null;
   private deviceId: string;
   private captchaToken: string | null = null;
-  private maxRetries: number;
-  private initialBackoff: number;
+  private readonly maxRetries: number;
+  private readonly initialBackoff: number;
 
   constructor(options?: PikPakClientOptions) {
     this.deviceId = options?.deviceId ?? generateDeviceId();
@@ -119,6 +119,62 @@ export class PikPakClient {
   }
 
   /**
+   * 构建请求 URL
+   */
+  private buildRequestUrl(config: RequestConfig): URL {
+    const url = new URL(config.url);
+
+    if (config.params) {
+      Object.entries(config.params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          const stringValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
+          url.searchParams.append(key, stringValue);
+        }
+      });
+    }
+
+    return url;
+  }
+
+  /**
+   * 执行单次请求
+   */
+  private async executeRequest<T>(config: RequestConfig): Promise<T> {
+    const headers = config.headers || this.getHeaders();
+    const url = this.buildRequestUrl(config);
+
+    const response = await fetch(url.toString(), {
+      method: config.method,
+      headers,
+      body: config.data ? JSON.stringify(config.data) : undefined,
+    });
+
+    return await this.handleResponse<T>(response);
+  }
+
+  /**
+   * 处理请求错误
+   */
+  private async handleRequestError(error: unknown, attempt: number): Promise<boolean> {
+    if (error instanceof PikPakRetryError) {
+      // Token 刷新后立即重试，不等待
+      if (error.message.includes("Token refreshed")) {
+        return true;
+      }
+    } else if (error instanceof PikPakError) {
+      throw error;
+    }
+
+    // 等待后重试
+    if (attempt < this.maxRetries - 1) {
+      await new Promise((resolve) => setTimeout(resolve, this.initialBackoff * 1000 * Math.pow(2, attempt)));
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * 发送请求
    */
   private async request<T>(config: RequestConfig): Promise<T> {
@@ -126,40 +182,12 @@ export class PikPakClient {
 
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
       try {
-        const headers = config.headers || this.getHeaders();
-        const url = new URL(config.url);
-
-        if (config.params) {
-          Object.entries(config.params).forEach(([key, value]) => {
-            if (value !== undefined && value !== null) {
-              url.searchParams.append(key, String(value));
-            }
-          });
-        }
-
-        const response = await fetch(url.toString(), {
-          method: config.method,
-          headers,
-          body: config.data ? JSON.stringify(config.data) : undefined,
-        });
-
-        return await this.handleResponse<T>(response);
+        return await this.executeRequest<T>(config);
       } catch (error) {
-        if (error instanceof PikPakRetryError) {
-          lastError = error;
-          // Token 刷新后立即重试，不等待
-          if (error.message.includes("Token refreshed")) {
-            continue;
-          }
-        } else if (error instanceof PikPakError) {
-          throw error;
-        } else {
-          lastError = error as Error;
-        }
-
-        // 等待后重试
-        if (attempt < this.maxRetries - 1) {
-          await new Promise((resolve) => setTimeout(resolve, this.initialBackoff * 1000 * Math.pow(2, attempt)));
+        lastError = error as Error;
+        const shouldRetry = await this.handleRequestError(error, attempt);
+        if (!shouldRetry) {
+          break;
         }
       }
     }

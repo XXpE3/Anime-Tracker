@@ -1,7 +1,6 @@
 /** PikPak API 工具函数 */
 
-import { createHash } from "crypto";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   CLIENT_ID,
   CLIENT_VERSION,
@@ -22,7 +21,7 @@ export function getTimestamp(): string {
  * 生成随机设备 ID（32位十六进制字符串）
  */
 export function generateDeviceId(): string {
-  return randomUUID().replace(/-/g, "");
+  return randomUUID().replaceAll("-", "");
 }
 
 /**
