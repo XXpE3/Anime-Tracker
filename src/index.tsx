@@ -1,4 +1,4 @@
-import { ActionPanel, Action, List, showToast, Toast, open, Icon, Color, Clipboard } from "@raycast/api";
+import { List, showToast, Toast, open, Icon, Color, Clipboard } from "@raycast/api";
 import { useCallback } from "react";
 
 import {
