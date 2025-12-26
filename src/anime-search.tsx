@@ -491,6 +491,8 @@ ${fileSize ? `**文件大小**: ${fileSize}` : ""}
               <List.Item.Detail.Metadata.Label title="字幕组" text={subGroup} />
               {fileSize && <List.Item.Detail.Metadata.Label title="文件大小" text={fileSize} />}
               <List.Item.Detail.Metadata.Separator />
+              <List.Item.Detail.Metadata.Label title="原始文件" text={item.title} />
+              <List.Item.Detail.Metadata.Separator />
               <List.Item.Detail.Metadata.Link title="详情页" target={item.link} text="查看网页" />
             </List.Item.Detail.Metadata>
           }
@@ -589,6 +591,8 @@ ${fileSize ? `**文件大小**: ${fileSize}` : ""}
               <List.Item.Detail.Metadata.Label title="状态" text="📦 已暂存" />
               <List.Item.Detail.Metadata.Label title="字幕组" text={subGroup} />
               {fileSize && <List.Item.Detail.Metadata.Label title="文件大小" text={fileSize} />}
+              <List.Item.Detail.Metadata.Separator />
+              <List.Item.Detail.Metadata.Label title="原始文件" text={item.title} />
               <List.Item.Detail.Metadata.Separator />
               <List.Item.Detail.Metadata.Link title="详情页" target={item.link} text="查看网页" />
             </List.Item.Detail.Metadata>
