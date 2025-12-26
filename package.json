@@ -11,6 +11,12 @@
       "title": "Anime Tracker",
       "description": "Show latest anime from Mikan",
       "mode": "view"
+    },
+    {
+      "name": "anime-search",
+      "title": "Anime Search",
+      "description": "Search anime from Mikan Project",
+      "mode": "view"
     }
   ],
   "dependencies": {
