@@ -1,6 +1,22 @@
 import { ActionPanel, Action, List, showToast, Toast, open, Icon, Color, Clipboard } from "@raycast/api";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Parser from "rss-parser";
+
+// 工具函数：判断两个日期是否为同一天（本地时区）
+const isSameLocalDay = (a: Date, b: Date): boolean =>
+  a.getFullYear() === b.getFullYear() &&
+  a.getMonth() === b.getMonth() &&
+  a.getDate() === b.getDate();
+
+// 工具函数：解码常见 HTML 实体
+const decodeHtmlEntities = (text: string): string =>
+  text
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&nbsp;", " ");
 
 interface AnimeItem {
   title: string;
@@ -23,10 +39,14 @@ export default function Command() {
   const [items, setItems] = useState<AnimeItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   
-  // 用于缓存详情页数据，防止重复请求 { [link]: { cover, intro } }
-  const cacheRef = useRef<Record<string, { cover?: string; intro?: string }>>({});
+  // 用于缓存详情页数据，防止重复请求
+  const cacheRef = useRef<Record<string, { coverUrl?: string; intro?: string }>>({});
   // 用于追踪正在请求中的链接，防止重复请求
   const pendingRef = useRef<Set<string>>(new Set());
+  // 用于防止闭包问题，始终读取最新的 items
+  const itemsRef = useRef<AnimeItem[]>([]);
+  // 用于取消旧的详情请求
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     async function fetchFeed() {
@@ -43,29 +63,30 @@ export default function Command() {
         const feed = await parser.parseString(xmlText);
         
         const now = new Date();
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
 
-        const parsedItems: AnimeItem[] = feed.items.map((item) => {
-          const fullTitle = item.title || "";
-          // 提取纯净的动画名
-          let animeName = fullTitle;
-          const nameMatch = /^\[.*?\]\s*(.*?)(?:\s-|\[|\()/u.exec(fullTitle);
-          if (nameMatch?.[1]) {
-            animeName = nameMatch[1].trim();
-          }
+        const parsedItems: AnimeItem[] = feed.items
+          .filter((item) => item.link) // 过滤掉没有 link 的条目
+          .map((item) => {
+            const fullTitle = item.title || "";
+            // 提取纯净的动画名
+            let animeName = fullTitle;
+            const nameMatch = /^\[.*?\]\s*(.*?)(?:\s-|\[|\()/u.exec(fullTitle);
+            if (nameMatch?.[1]) {
+              animeName = nameMatch[1].trim();
+            }
 
-          const itemTime = new Date(item.pubDate || "").getTime();
+            const itemDate = new Date(item.pubDate || 0);
 
-          return {
-            title: fullTitle,
-            link: item.link || "",
-            pubDate: item.pubDate || "",
-            guid: item.guid,
-            torrentUrl: item.enclosure?.url,
-            animeName: animeName,
-            isToday: itemTime >= startOfToday,
-          };
-        });
+            return {
+              title: fullTitle,
+              link: item.link || "",
+              pubDate: item.pubDate || "",
+              guid: item.guid,
+              torrentUrl: item.enclosure?.url,
+              animeName: animeName,
+              isToday: isSameLocalDay(itemDate, now),
+            };
+          });
 
         // 截取前 50 条，避免列表过长
         setItems(parsedItems.slice(0, 50));
@@ -81,12 +102,18 @@ export default function Command() {
     fetchFeed();
   }, []);
 
+  // 同步 itemsRef，防止闭包读取旧值
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
   // --- 核心优化：当选中某一行时，去抓取它的封面和简介 ---
-  const handleSelectionChange = async (itemId: string | null) => {
+  const handleSelectionChange = useCallback(async (itemId: string | null) => {
     if (!itemId) return;
 
-    // 使用 itemId 匹配 guid 或 link（作为 fallback）
-    const selectedItem = items.find((i) => (i.guid ?? i.link) === itemId);
+    // 使用 itemsRef 避免闭包问题
+    const list = itemsRef.current;
+    const selectedItem = list.find((i) => (i.guid ?? i.link) === itemId);
     if (!selectedItem) return;
 
     // 1. 如果缓存里有了，不需要再抓
@@ -99,33 +126,41 @@ export default function Command() {
       return;
     }
 
-    // 3. 标记为正在请求
+    // 3. 取消上一个请求（如果存在），避免竞态浪费
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    // 4. 标记为正在请求
     pendingRef.current.add(selectedItem.link);
 
-    // 4. 抓取网页并解析
+    // 5. 抓取网页并解析
     try {
-        const res = await fetch(selectedItem.link);
+        const res = await fetch(selectedItem.link, { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const html = await res.text();
 
         // --- 正则提取封面 ---
-        // Mikan 封面通常在 style="background-image: url('/Images/...')"
-        const coverMatch = /background-image:\s*url\('([^']+)'\)/u.exec(html);
+        // 兼容单引号、双引号、无引号的 url()
+        const coverMatch = /background-image:\s*url\(["']?([^"')]+)["']?\)/u.exec(html);
         let coverUrl = coverMatch ? coverMatch[1] : undefined;
         if (coverUrl?.startsWith("/")) {
             coverUrl = MIKAN_BASE + coverUrl;
         }
 
         // --- 正则提取简介 ---
-        // 简介通常在 <p class="bangumi-intro"> ... </p>
         const introMatch = /<p class="bangumi-intro">([\s\S]*?)<\/p>/u.exec(html);
-        let intro = introMatch ? introMatch[1].replaceAll(/<br\s*\/?>/gi, "\n").replaceAll(/<[^>]+>/gu, "").trim() : "暂无简介";
+        let intro = introMatch
+          ? decodeHtmlEntities(
+              introMatch[1].replaceAll(/<br\s*\/?>/gi, "\n").replaceAll(/<[^>]+>/gu, "").trim()
+            )
+          : "暂无简介";
 
         // 截断简介防止过长
         if (intro.length > 150) intro = intro.substring(0, 150) + "...";
 
-        // 5. 写入缓存并更新 UI
-        cacheRef.current[selectedItem.link] = { cover: coverUrl, intro };
+        // 6. 写入缓存并更新 UI
+        cacheRef.current[selectedItem.link] = { coverUrl, intro };
 
         // 更新 items 数组中的对应项
         setItems((prevItems) =>
@@ -135,6 +170,10 @@ export default function Command() {
         );
 
     } catch (error: unknown) {
+        // 如果是主动取消的请求，不需要处理
+        if (error instanceof Error && error.name === "AbortError") {
+          return;
+        }
         const message = error instanceof Error ? error.message : "获取失败";
         console.error("Failed to fetch anime details:", message);
         // 更新 UI 显示错误状态
@@ -144,10 +183,10 @@ export default function Command() {
             )
         );
     } finally {
-        // 6. 清除请求中标记
+        // 7. 清除请求中标记
         pendingRef.current.delete(selectedItem.link);
     }
-  };
+  }, []);
 
   // 获取磁力链
   const getMagnetLink = async (detailUrl: string): Promise<string | null> => {
@@ -155,7 +194,8 @@ export default function Command() {
       const response = await fetch(detailUrl);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const html = await response.text();
-      const magnetRegex = /magnet:\?xt=urn:btih:[a-zA-Z0-9]*/u;
+      // 要求 32-40 位 hash（Base32/Hex），并允许后续参数
+      const magnetRegex = /magnet:\?xt=urn:btih:[a-zA-Z0-9]{32,40}[^"'<\s]*/u;
       const match = magnetRegex.exec(html);
       return match ? match[0] : null;
     } catch (error: unknown) {
