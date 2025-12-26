@@ -1,5 +1,5 @@
 import { ActionPanel, Action, List, showToast, Toast, open, Icon, Color, Clipboard } from "@raycast/api";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useReducer } from "react";
 import Parser from "rss-parser";
 
 interface AnimeItem {
@@ -26,7 +26,7 @@ export default function Command() {
   // 用于缓存详情页数据，防止重复请求 { [link]: { cover, intro } }
   const cacheRef = useRef<Record<string, { cover?: string; intro?: string }>>({});
   // 强制刷新 UI 的状态
-  const [, forceUpdate] = useState({});
+  const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
 
   useEffect(() => {
     async function fetchFeed() {
@@ -49,8 +49,8 @@ export default function Command() {
           const fullTitle = item.title || "";
           // 提取纯净的动画名
           let animeName = fullTitle;
-          const nameMatch = fullTitle.match(/^\[.*?\]\s*(.*?)(?:\s-|\[|\()/);
-          if (nameMatch && nameMatch[1]) {
+          const nameMatch = /^\[.*?\]\s*(.*?)(?:\s-|\[|\()/u.exec(fullTitle);
+          if (nameMatch?.[1]) {
             animeName = nameMatch[1].trim();
           }
 
@@ -71,8 +71,9 @@ export default function Command() {
         setItems(parsedItems.slice(0, 50));
         setIsLoading(false);
 
-      } catch (error) {
-        showToast({ style: Toast.Style.Failure, title: "RSS 获取失败", message: "请检查网络" });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "请检查网络";
+        showToast({ style: Toast.Style.Failure, title: "RSS 获取失败", message });
         setIsLoading(false);
       }
     }
@@ -100,16 +101,16 @@ export default function Command() {
 
         // --- 正则提取封面 ---
         // Mikan 封面通常在 style="background-image: url('/Images/...')"
-        const coverMatch = html.match(/background-image:\s*url\('([^']+)'\)/);
+        const coverMatch = /background-image:\s*url\('([^']+)'\)/u.exec(html);
         let coverUrl = coverMatch ? coverMatch[1] : undefined;
-        if (coverUrl && coverUrl.startsWith("/")) {
+        if (coverUrl?.startsWith("/")) {
             coverUrl = MIKAN_BASE + coverUrl;
         }
 
         // --- 正则提取简介 ---
         // 简介通常在 <p class="bangumi-intro"> ... </p>
-        const introMatch = html.match(/<p class="bangumi-intro">([\s\S]*?)<\/p>/);
-        let intro = introMatch ? introMatch[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").trim() : "暂无简介";
+        const introMatch = /<p class="bangumi-intro">([\s\S]*?)<\/p>/u.exec(html);
+        let intro = introMatch ? introMatch[1].replaceAll(/<br\s*\/?>/gi, "\n").replaceAll(/<[^>]+>/gu, "").trim() : "暂无简介";
         
         // 截断简介防止过长
         if (intro.length > 150) intro = intro.substring(0, 150) + "...";
@@ -123,10 +124,10 @@ export default function Command() {
                 item.link === selectedItem.link ? { ...item, coverUrl, intro } : item
             )
         );
-        forceUpdate({}); // 触发重渲染
+        forceUpdate(); // 触发重渲染
 
-    } catch (e) {
-        // 抓取失败忽略即可，显示默认信息
+    } catch (error: unknown) {
+        console.error("Failed to fetch anime details:", error instanceof Error ? error.message : error);
     }
   };
 
@@ -135,10 +136,11 @@ export default function Command() {
     try {
       const response = await fetch(detailUrl);
       const html = await response.text();
-      const magnetRegex = /magnet:\?xt=urn:btih:[a-zA-Z0-9]*/;
-      const match = html.match(magnetRegex);
+      const magnetRegex = /magnet:\?xt=urn:btih:[a-zA-Z0-9]*/u;
+      const match = magnetRegex.exec(html);
       return match ? match[0] : null;
-    } catch (e) {
+    } catch (error: unknown) {
+      console.error("Failed to get magnet link:", error instanceof Error ? error.message : error);
       return null;
     }
   };
@@ -201,7 +203,7 @@ export default function Command() {
   );
 }
 
-function AnimeListItem({ item, onAction }: { item: AnimeItem; onAction: any }) {
+function AnimeListItem({ item, onAction }: Readonly<{ item: AnimeItem; onAction: (item: AnimeItem, mode: "browser_pikpak" | "download" | "copy") => Promise<void> }>) {
   // 构建 Markdown
   // 1. 如果有封面图，显示图片
   const imageMarkdown = item.coverUrl ? `![封面](${item.coverUrl})` : "";
@@ -228,14 +230,14 @@ ${introMarkdown}
       title={item.animeName}
       subtitle={item.isToday ? "今日更新" : ""}
       // 列表左侧小图标
-      icon={{ source: Icon.Video, color: item.isToday ? Color.Green : Color.SecondaryText }}
+      icon={{ source: Icon.Video, tintColor: item.isToday ? Color.Green : Color.SecondaryText }}
       detail={
         <List.Item.Detail
           markdown={detailMarkdown}
           metadata={
             <List.Item.Detail.Metadata>
               <List.Item.Detail.Metadata.Label title="状态" text={item.isToday ? "🔥 连载中" : "已发布"} />
-              <List.Item.Detail.Metadata.Label title="字幕组" text={item.title.match(/^\[(.*?)\]/)?.[1] || "未知"} />
+              <List.Item.Detail.Metadata.Label title="字幕组" text={/^\[(.*?)\]/u.exec(item.title)?.[1] ?? "未知"} />
               <List.Item.Detail.Metadata.Separator />
               <List.Item.Detail.Metadata.Link title="Mikan 详情" target={item.link} text="查看网页" />
             </List.Item.Detail.Metadata>
@@ -253,7 +255,7 @@ ${introMarkdown}
           </ActionPanel.Section>
           <ActionPanel.Section title="其他">
             <Action title="本地下载" icon={Icon.Download} onAction={() => onAction(item, "download")} />
-            <Action.CopyToClipboard title="复制磁力链" onAction={() => onAction(item, "copy")} />
+            <Action title="复制磁力链" icon={Icon.Clipboard} onAction={() => onAction(item, "copy")} />
           </ActionPanel.Section>
         </ActionPanel>
       }
