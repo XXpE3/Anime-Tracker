@@ -35,7 +35,7 @@ export {
 } from "./patterns";
 
 // Hooks
-export { useMagnetCache, useStagedItems, useAnimeRss, useDetailPrefetch, usePikPak } from "./hooks";
+export { useMagnetCache, useStagedItems, useAnimeRss, useDetailPrefetch, usePikPak, useDebounce } from "./hooks";
 
 // Guards
 export {

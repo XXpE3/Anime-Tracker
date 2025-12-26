@@ -11,6 +11,7 @@ import {
   Clipboard,
   open,
 } from "@raycast/api";
+import { useFetch } from "@raycast/utils";
 import Parser from "rss-parser";
 
 import {
@@ -28,6 +29,7 @@ import {
   useStagedItems,
   StagedContext,
   usePikPak,
+  useDebounce,
 } from "./lib";
 import { buildDetailMarkdown } from "./components/DetailMarkdown";
 import { AnimeActions } from "./components/AnimeActions";
@@ -35,20 +37,8 @@ import { hasCredentials } from "./lib/pikpak";
 
 const parser = new Parser();
 
-async function searchAnime(keyword: string): Promise<SearchResult[]> {
-  const url = `${MIKAN_MIRROR}/Home/Search?searchstr=${encodeURIComponent(keyword)}`;
-  const response = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
-  });
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-
-  const html = await response.text();
+function parseSearchResults(html: string): SearchResult[] {
   const results: SearchResult[] = [];
-
-  // 重置正则表达式的 lastIndex（因为使用了全局标志）
   SEARCH_RESULT_PATTERN.lastIndex = 0;
 
   let match: RegExpExecArray | null;
@@ -60,46 +50,31 @@ async function searchAnime(keyword: string): Promise<SearchResult[]> {
       name: decodeHtmlEntities(title),
     });
   }
-
   return results;
 }
 
 export default function AnimeSearchCommand() {
   const [searchText, setSearchText] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const debouncedSearchText = useDebounce(searchText, 800);
 
-  useEffect(() => {
-    if (!searchText.trim()) {
-      setResults([]);
-      return;
+  const { isLoading, data: results = [] } = useFetch<SearchResult[]>(
+    `${MIKAN_MIRROR}/Home/Search?searchstr=${encodeURIComponent(debouncedSearchText)}`,
+    {
+      execute: !!debouncedSearchText.trim(),
+      parseResponse: async (response) => {
+        const html = await response.text();
+        return parseSearchResults(html);
+      },
+      headers: { "User-Agent": USER_AGENT },
+      onError: (error) => {
+        showToast({
+          style: Toast.Style.Failure,
+          title: "搜索失败",
+          message: error.message,
+        });
+      },
     }
-
-    // 防抖：延迟 500ms 后才执行搜索
-    const timeoutId = setTimeout(() => {
-      const doSearch = async () => {
-        setIsLoading(true);
-        try {
-          const data = await searchAnime(searchText);
-          setResults(data);
-        } catch (error) {
-          console.error("Search failed:", error);
-          showToast({
-            style: Toast.Style.Failure,
-            title: "搜索失败",
-            message: error instanceof Error ? error.message : "未知错误",
-          });
-        } finally {
-          setIsLoading(false);
-        }
-      };
-
-      doSearch();
-    }, 500);
-
-    // 清理函数：如果 searchText 再次变化，取消上一次的定时器
-    return () => clearTimeout(timeoutId);
-  }, [searchText]);
+  );
 
   return (
     <Grid
@@ -107,7 +82,7 @@ export default function AnimeSearchCommand() {
       aspectRatio="2/3"
       inset={Grid.Inset.Small}
       filtering={false}
-      throttle={true}
+      throttle={false}
       onSearchTextChange={setSearchText}
       isLoading={isLoading}
       searchBarPlaceholder="搜索动漫名称..."
