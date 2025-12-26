@@ -27,9 +27,11 @@ import {
   useMagnetCache,
   useStagedItems,
   StagedContext,
+  usePikPak,
 } from "./lib";
 import { buildDetailMarkdown } from "./components/DetailMarkdown";
 import { AnimeActions } from "./components/AnimeActions";
+import { hasCredentials } from "./lib/pikpak";
 
 const parser = new Parser();
 
@@ -156,6 +158,7 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
   const { getMagnetLink } = useMagnetCache();
   const { stagedItems, handleStage, handleUnstage, handleCopyAllMagnets, isStaged } =
     useStagedItems<BangumiItem>(getMagnetLink);
+  const { client: pikpakClient, isLoggedIn: isPikPakLoggedIn } = usePikPak();
 
   useEffect(() => {
     async function fetchRss() {
@@ -231,6 +234,47 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
     [getMagnetLink]
   );
 
+  const handleSendToPikPak = useCallback(
+    async (item: BangumiItem) => {
+      if (!pikpakClient || !isPikPakLoggedIn) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "未登录 PikPak",
+          message: "请先配置 PikPak 账号",
+        });
+        return;
+      }
+
+      const toast = await showToast({ style: Toast.Style.Animated, title: "解析磁力链..." });
+      const magnet = await getMagnetLink(item.link);
+
+      if (!magnet) {
+        toast.hide();
+        await showToast({ style: Toast.Style.Failure, title: "无法获取磁力链" });
+        return;
+      }
+
+      try {
+        toast.title = "发送到 PikPak...";
+        await pikpakClient.addOfflineTask(magnet);
+        toast.hide();
+        await showToast({
+          style: Toast.Style.Success,
+          title: "已添加到 PikPak",
+          message: item.title,
+        });
+      } catch (error) {
+        toast.hide();
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "添加失败",
+          message: error instanceof Error ? error.message : "未知错误",
+        });
+      }
+    },
+    [pikpakClient, isPikPakLoggedIn, getMagnetLink]
+  );
+
   const getItemKey = (item: BangumiItem): string => item.guid ?? item.link;
 
   return (
@@ -262,6 +306,7 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
                 item={item}
                 bangumiInfo={{ coverUrl, animeName: name }}
                 onAction={handleAction}
+                onSendToPikPak={hasCredentials() && isPikPakLoggedIn ? handleSendToPikPak : undefined}
                 onUnstage={() => handleUnstage(item)}
               />
             ))}
@@ -275,6 +320,7 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
               item={item}
               bangumiInfo={{ coverUrl, animeName: name }}
               onAction={handleAction}
+              onSendToPikPak={hasCredentials() && isPikPakLoggedIn ? handleSendToPikPak : undefined}
               staging={{ onStage: () => handleStage(item), isStaged: isStaged(item) }}
             />
           ))}
@@ -298,6 +344,7 @@ interface ResourceListItemProps {
   item: BangumiItem;
   bangumiInfo: BangumiInfo;
   onAction: (item: BangumiItem, mode: ActionMode) => Promise<void>;
+  onSendToPikPak?: (item: BangumiItem) => Promise<void>;
   staging: StagingHandlers;
 }
 
@@ -305,6 +352,7 @@ function ResourceListItem({
   item,
   bangumiInfo,
   onAction,
+  onSendToPikPak,
   staging,
 }: Readonly<ResourceListItemProps>) {
   const fileSize = extractFileSize(item.description || item.title);
@@ -344,6 +392,7 @@ function ResourceListItem({
             onBrowserPikpak: () => onAction(item, "browser_pikpak"),
             onDownload: () => onAction(item, "download"),
             onCopy: () => onAction(item, "copy"),
+            onSendToPikPak: onSendToPikPak ? () => onSendToPikPak(item) : undefined,
           }}
           staging={{
             onStage: staging.isStaged ? undefined : staging.onStage,
@@ -359,6 +408,7 @@ interface StagedListItemProps {
   item: BangumiItem;
   bangumiInfo: BangumiInfo;
   onAction: (item: BangumiItem, mode: ActionMode) => Promise<void>;
+  onSendToPikPak?: (item: BangumiItem) => Promise<void>;
   onUnstage: () => void;
 }
 
@@ -366,6 +416,7 @@ function StagedListItem({
   item,
   bangumiInfo,
   onAction,
+  onSendToPikPak,
   onUnstage,
 }: Readonly<StagedListItemProps>) {
   const fileSize = extractFileSize(item.description || item.title);
@@ -407,6 +458,7 @@ function StagedListItem({
             onBrowserPikpak: () => onAction(item, "browser_pikpak"),
             onDownload: () => onAction(item, "download"),
             onCopy: () => onAction(item, "copy"),
+            onSendToPikPak: onSendToPikPak ? () => onSendToPikPak(item) : undefined,
           }}
           staging={{
             onUnstage,

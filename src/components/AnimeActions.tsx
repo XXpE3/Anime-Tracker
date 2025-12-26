@@ -6,6 +6,7 @@ interface ActionHandlers {
   onBrowserPikpak: () => void;
   onDownload: () => void;
   onCopy: () => void;
+  onSendToPikPak?: () => void;
 }
 
 /** 暂存状态与处理器 */
@@ -50,6 +51,14 @@ export function AnimeActions({ actions, staging }: Readonly<AnimeActionsProps>) 
           </ActionPanel.Section>
           <ActionPanel.Section title="单项操作">
             <Action title="Chrome / PikPak 播放" icon={Icon.Globe} onAction={actions.onBrowserPikpak} />
+            {actions.onSendToPikPak && (
+              <Action
+                title="发送到 PikPak"
+                icon={Icon.Cloud}
+                shortcut={{ modifiers: ["cmd"], key: "p" }}
+                onAction={actions.onSendToPikPak}
+              />
+            )}
             <Action title="本地下载" icon={Icon.Download} onAction={actions.onDownload} />
             <Action title="复制磁力链" icon={Icon.Clipboard} onAction={actions.onCopy} />
           </ActionPanel.Section>
@@ -59,6 +68,14 @@ export function AnimeActions({ actions, staging }: Readonly<AnimeActionsProps>) 
         <>
           <ActionPanel.Section title="推荐操作">
             <Action title="Chrome / PikPak 播放" icon={Icon.Globe} onAction={actions.onBrowserPikpak} />
+            {actions.onSendToPikPak && (
+              <Action
+                title="发送到 PikPak"
+                icon={Icon.Cloud}
+                shortcut={{ modifiers: ["cmd"], key: "p" }}
+                onAction={actions.onSendToPikPak}
+              />
+            )}
             {staging.onStage && (
               <Action
                 title="加入暂存"

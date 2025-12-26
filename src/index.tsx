@@ -9,13 +9,16 @@ import {
   useDetailPrefetch,
   useStagedItems,
   StagedContext,
+  usePikPak,
 } from "./lib";
 import { buildDetailMarkdown } from "./components/DetailMarkdown";
 import { AnimeActions } from "./components/AnimeActions";
+import { hasCredentials } from "./lib/pikpak";
 
 export default function Command() {
   const { items, setItems, isLoading } = useAnimeRss();
   const { handleSelectionChange, getCachedMagnet } = useDetailPrefetch(items, setItems);
+  const { client: pikpakClient, isLoggedIn: isPikPakLoggedIn } = usePikPak();
 
   const getMagnetLinkWithCache = useCallback(
     async (detailUrl: string): Promise<string | null> => {
@@ -75,6 +78,47 @@ export default function Command() {
     [getMagnetLinkWithCache]
   );
 
+  const handleSendToPikPak = useCallback(
+    async (item: AnimeItem) => {
+      if (!pikpakClient || !isPikPakLoggedIn) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "未登录 PikPak",
+          message: "请先配置 PikPak 账号",
+        });
+        return;
+      }
+
+      const toast = await showToast({ style: Toast.Style.Animated, title: "解析磁力链..." });
+      const magnet = await getMagnetLinkWithCache(item.link);
+
+      if (!magnet) {
+        toast.hide();
+        await showToast({ style: Toast.Style.Failure, title: "无法获取磁力链" });
+        return;
+      }
+
+      try {
+        toast.title = "发送到 PikPak...";
+        await pikpakClient.addOfflineTask(magnet);
+        toast.hide();
+        await showToast({
+          style: Toast.Style.Success,
+          title: "已添加到 PikPak",
+          message: item.animeName,
+        });
+      } catch (error) {
+        toast.hide();
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "添加失败",
+          message: error instanceof Error ? error.message : "未知错误",
+        });
+      }
+    },
+    [pikpakClient, isPikPakLoggedIn, getMagnetLinkWithCache]
+  );
+
   const getItemKey = (item: AnimeItem): string => item.guid ?? item.link;
 
   const todayItems = items.filter((i) => i.isToday);
@@ -90,6 +134,7 @@ export default function Command() {
                 key={`staged-${getItemKey(item)}`}
                 item={item}
                 onAction={handleAction}
+                onSendToPikPak={hasCredentials() && isPikPakLoggedIn ? handleSendToPikPak : undefined}
                 onUnstage={() => handleUnstage(item)}
               />
             ))}
@@ -102,6 +147,7 @@ export default function Command() {
               key={getItemKey(item)}
               item={item}
               onAction={handleAction}
+              onSendToPikPak={hasCredentials() && isPikPakLoggedIn ? handleSendToPikPak : undefined}
               onStage={() => handleStage(item)}
               isStaged={isStaged(item)}
             />
@@ -114,6 +160,7 @@ export default function Command() {
               key={getItemKey(item)}
               item={item}
               onAction={handleAction}
+              onSendToPikPak={hasCredentials() && isPikPakLoggedIn ? handleSendToPikPak : undefined}
               onStage={() => handleStage(item)}
               isStaged={isStaged(item)}
             />
@@ -127,11 +174,12 @@ export default function Command() {
 interface AnimeListItemProps {
   item: AnimeItem;
   onAction: (item: AnimeItem, mode: ActionMode) => Promise<void>;
+  onSendToPikPak?: (item: AnimeItem) => Promise<void>;
   onStage: () => void;
   isStaged: boolean;
 }
 
-function AnimeListItem({ item, onAction, onStage, isStaged }: Readonly<AnimeListItemProps>) {
+function AnimeListItem({ item, onAction, onSendToPikPak, onStage, isStaged }: Readonly<AnimeListItemProps>) {
   const detailMarkdown = buildDetailMarkdown({
     coverUrl: item.coverUrl,
     animeName: item.animeName,
@@ -165,6 +213,7 @@ function AnimeListItem({ item, onAction, onStage, isStaged }: Readonly<AnimeList
             onBrowserPikpak: () => onAction(item, "browser_pikpak"),
             onDownload: () => onAction(item, "download"),
             onCopy: () => onAction(item, "copy"),
+            onSendToPikPak: onSendToPikPak ? () => onSendToPikPak(item) : undefined,
           }}
           staging={{
             onStage: isStaged ? undefined : onStage,
@@ -179,10 +228,11 @@ function AnimeListItem({ item, onAction, onStage, isStaged }: Readonly<AnimeList
 interface StagedListItemProps {
   item: AnimeItem;
   onAction: (item: AnimeItem, mode: ActionMode) => Promise<void>;
+  onSendToPikPak?: (item: AnimeItem) => Promise<void>;
   onUnstage: () => void;
 }
 
-function StagedListItem({ item, onAction, onUnstage }: Readonly<StagedListItemProps>) {
+function StagedListItem({ item, onAction, onSendToPikPak, onUnstage }: Readonly<StagedListItemProps>) {
   const detailMarkdown = buildDetailMarkdown({
     coverUrl: item.coverUrl,
     animeName: item.animeName,
@@ -216,6 +266,7 @@ function StagedListItem({ item, onAction, onUnstage }: Readonly<StagedListItemPr
             onBrowserPikpak: () => onAction(item, "browser_pikpak"),
             onDownload: () => onAction(item, "download"),
             onCopy: () => onAction(item, "copy"),
+            onSendToPikPak: onSendToPikPak ? () => onSendToPikPak(item) : undefined,
           }}
           staging={{
             onUnstage,
