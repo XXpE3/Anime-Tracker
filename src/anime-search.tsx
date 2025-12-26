@@ -195,10 +195,26 @@ interface BangumiDetailProps {
 
 const parser = new Parser();
 
+// 提取字幕组名称
+const extractSubGroup = (title: string): string => {
+  const match = /^\[([^\]]+)\]/.exec(title);
+  return match?.[1] ?? "未知";
+};
+
 function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
   const [items, setItems] = useState<BangumiItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [stagedItems, setStagedItems] = useState<BangumiItem[]>([]);
+  const [selectedSubGroup, setSelectedSubGroup] = useState<string>("all");
+
+  // 计算唯一的字幕组列表
+  const subGroups = [...new Set(items.map((item) => extractSubGroup(item.title)))];
+
+  // 过滤后的资源列表
+  const filteredItems =
+    selectedSubGroup === "all"
+      ? items
+      : items.filter((item) => extractSubGroup(item.title) === selectedSubGroup);
 
   // 磁力链缓存
   const magnetCacheRef = useRef<Record<string, string | null>>({});
@@ -369,7 +385,25 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
   }, [stagedItems, getMagnetLink]);
 
   return (
-    <List navigationTitle={name} isLoading={isLoading} isShowingDetail>
+    <List
+      navigationTitle={name}
+      isLoading={isLoading}
+      isShowingDetail
+      searchBarAccessory={
+        <List.Dropdown
+          tooltip="按字幕组过滤 (⌘P)"
+          value={selectedSubGroup}
+          onChange={setSelectedSubGroup}
+        >
+          <List.Dropdown.Item title="全部字幕组" value="all" />
+          <List.Dropdown.Section title="字幕组">
+            {subGroups.map((group) => (
+              <List.Dropdown.Item key={group} title={group} value={group} />
+            ))}
+          </List.Dropdown.Section>
+        </List.Dropdown>
+      }
+    >
       {stagedItems.length > 0 && (
         <List.Section title="📦 暂存列表" subtitle={`${stagedItems.length} 项`}>
           {stagedItems.map((item) => (
@@ -387,8 +421,8 @@ function BangumiDetail({ id, name, coverUrl }: Readonly<BangumiDetailProps>) {
         </List.Section>
       )}
 
-      <List.Section title="📺 资源列表" subtitle={`${items.length} 个资源`}>
-        {items.map((item) => (
+      <List.Section title="📺 资源列表" subtitle={`${filteredItems.length} 个资源`}>
+        {filteredItems.map((item) => (
           <ResourceListItem
             key={item.guid ?? item.link}
             item={item}
