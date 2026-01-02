@@ -186,28 +186,52 @@ export default function PikPakCommand() {
     await open("https://mypikpak.com");
   }, []);
 
-  // 添加离线下载任务
+  // 添加离线下载任务（支持批量）
   const handleAddOfflineTask = useCallback(
-    async (url: string) => {
-      if (!client) return;
+    async (urls: string[]) => {
+      if (!client || urls.length === 0) return;
 
-      // 验证链接格式
-      const trimmedUrl = url.trim();
-      if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://") && !trimmedUrl.startsWith("magnet:")) {
+      // 验证所有链接格式
+      const validUrls = urls.filter(
+        (url) => url.startsWith("http://") || url.startsWith("https://") || url.startsWith("magnet:")
+      );
+
+      if (validUrls.length === 0) {
         await showToast({
           style: Toast.Style.Failure,
-          title: "链接格式错误",
+          title: "没有有效的链接",
           message: "请输入 http、https 或磁力链接",
         });
         return;
       }
 
       try {
-        await showToast({ style: Toast.Style.Animated, title: "添加任务中..." });
-        await client.addOfflineTask(trimmedUrl);
-        await showToast({ style: Toast.Style.Success, title: "已添加下载任务" });
+        await showToast({ style: Toast.Style.Animated, title: `添加 ${validUrls.length} 个任务...` });
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const url of validUrls) {
+          try {
+            await client.addOfflineTask(url);
+            successCount++;
+          } catch {
+            failCount++;
+          }
+        }
+
         setShowAddForm(false);
         await loadTasks();
+
+        if (failCount === 0) {
+          await showToast({ style: Toast.Style.Success, title: `已添加 ${successCount} 个任务` });
+        } else {
+          await showToast({
+            style: Toast.Style.Success,
+            title: "添加完成",
+            message: `成功 ${successCount} 个，失败 ${failCount} 个`,
+          });
+        }
       } catch (error) {
         await showToast({
           style: Toast.Style.Failure,
@@ -471,7 +495,7 @@ function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onPlayWithIIN
 }
 
 interface AddTaskFormProps {
-  onSubmit: (url: string) => void;
+  onSubmit: (urls: string[]) => void;
   onCancel: () => void;
 }
 
@@ -483,19 +507,25 @@ function AddTaskForm({ onSubmit, onCancel }: Readonly<AddTaskFormProps>) {
           <Action.SubmitForm
             title="添加下载"
             icon={Icon.Plus}
-            onSubmit={(values: { url: string }) => onSubmit(values.url)}
+            onSubmit={(values: { urls: string }) => {
+              const urls = values.urls
+                .split('\n')
+                .map(url => url.trim())
+                .filter(url => url.length > 0);
+              onSubmit(urls);
+            }}
           />
           <Action title="取消" icon={Icon.XMarkCircle} onAction={onCancel} />
         </ActionPanel>
       }
     >
-      <Form.TextField
-        id="url"
+      <Form.TextArea
+        id="urls"
         title="下载链接"
-        placeholder="输入 http、https 或磁力链接"
+        placeholder="每行输入一个链接，支持 http、https 或磁力链接"
         autoFocus
       />
-      <Form.Description text="支持 HTTP/HTTPS 链接和磁力链接（magnet:）" />
+      <Form.Description text="每行一个链接，支持 HTTP/HTTPS 和磁力链接（magnet:）" />
     </Form>
   );
 }
