@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { List, ActionPanel, Action, showToast, Toast, Icon, Color, open, Clipboard } from "@raycast/api";
+import { List, ActionPanel, Action, showToast, Toast, Icon, Color, open, Clipboard, Form } from "@raycast/api";
 import { usePikPak } from "./lib/hooks";
 import { type OfflineTask, hasCredentials } from "./lib/pikpak";
 
@@ -10,6 +10,7 @@ export default function PikPakCommand() {
   const { client, isLoggedIn, isLoading: clientLoading, login } = usePikPak();
   const [tasks, setTasks] = useState<OfflineTask[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
 
   // 检查是否配置了凭据
   const hasConfig = hasCredentials();
@@ -185,6 +186,39 @@ export default function PikPakCommand() {
     await open("https://mypikpak.com");
   }, []);
 
+  // 添加离线下载任务
+  const handleAddOfflineTask = useCallback(
+    async (url: string) => {
+      if (!client) return;
+
+      // 验证链接格式
+      const trimmedUrl = url.trim();
+      if (!trimmedUrl.startsWith("http://") && !trimmedUrl.startsWith("https://") && !trimmedUrl.startsWith("magnet:")) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "链接格式错误",
+          message: "请输入 http、https 或磁力链接",
+        });
+        return;
+      }
+
+      try {
+        await showToast({ style: Toast.Style.Animated, title: "添加任务中..." });
+        await client.addOfflineTask(trimmedUrl);
+        await showToast({ style: Toast.Style.Success, title: "已添加下载任务" });
+        setShowAddForm(false);
+        await loadTasks();
+      } catch (error) {
+        await showToast({
+          style: Toast.Style.Failure,
+          title: "添加失败",
+          message: error instanceof Error ? error.message : "未知错误",
+        });
+      }
+    },
+    [client, loadTasks]
+  );
+
   // 未配置凭据
   if (!hasConfig) {
     return (
@@ -216,6 +250,16 @@ export default function PikPakCommand() {
     );
   }
 
+  // 显示添加下载链接表单
+  if (showAddForm) {
+    return (
+      <AddTaskForm
+        onSubmit={handleAddOfflineTask}
+        onCancel={() => setShowAddForm(false)}
+      />
+    );
+  }
+
   return (
     <List
       isLoading={isLoading || clientLoading}
@@ -228,6 +272,12 @@ export default function PikPakCommand() {
           description="添加磁力链或 URL 开始下载"
           actions={
             <ActionPanel>
+              <Action
+                title="添加下载链接"
+                icon={Icon.Plus}
+                shortcut={{ modifiers: ["cmd"], key: "n" }}
+                onAction={() => setShowAddForm(true)}
+              />
               <Action title="打开 PikPak 网页" icon={Icon.Globe} onAction={handleOpenPikPak} />
               <Action title="刷新列表" icon={Icon.ArrowClockwise} onAction={loadTasks} />
             </ActionPanel>
@@ -247,6 +297,7 @@ export default function PikPakCommand() {
                   onGetDownloadUrl={handleGetDownloadUrl}
                   onPlayWithIINA={handlePlayWithIINA}
                   onRefresh={loadTasks}
+                  onAddTask={() => setShowAddForm(true)}
                 />
               ))}
           </List.Section>
@@ -263,6 +314,7 @@ export default function PikPakCommand() {
                   onGetDownloadUrl={handleGetDownloadUrl}
                   onPlayWithIINA={handlePlayWithIINA}
                   onRefresh={loadTasks}
+                  onAddTask={() => setShowAddForm(true)}
                 />
               ))}
           </List.Section>
@@ -279,6 +331,7 @@ export default function PikPakCommand() {
                   onGetDownloadUrl={handleGetDownloadUrl}
                   onPlayWithIINA={handlePlayWithIINA}
                   onRefresh={loadTasks}
+                  onAddTask={() => setShowAddForm(true)}
                 />
               ))}
           </List.Section>
@@ -295,6 +348,7 @@ interface TaskListItemProps {
   onGetDownloadUrl: (fileId: string) => void;
   onPlayWithIINA: (fileId: string) => void;
   onRefresh: () => void;
+  onAddTask: () => void;
 }
 
 interface CompleteTaskActionsProps {
@@ -321,7 +375,7 @@ function CompleteTaskActions({ fileId, onGetDownloadUrl, onPlayWithIINA }: Reado
   );
 }
 
-function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onPlayWithIINA, onRefresh }: Readonly<TaskListItemProps>) {
+function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onPlayWithIINA, onRefresh, onAddTask }: Readonly<TaskListItemProps>) {
   const getStatusIcon = () => {
     switch (task.phase) {
       case "PHASE_TYPE_RUNNING":
@@ -393,6 +447,12 @@ function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onPlayWithIIN
           </ActionPanel.Section>
           <ActionPanel.Section title="其他">
             <Action
+              title="添加下载链接"
+              icon={Icon.Plus}
+              shortcut={{ modifiers: ["cmd"], key: "n" }}
+              onAction={onAddTask}
+            />
+            <Action
               title="刷新列表"
               icon={Icon.ArrowClockwise}
               shortcut={{ modifiers: ["cmd"], key: "r" }}
@@ -410,3 +470,32 @@ function TaskListItem({ task, onDelete, onRetry, onGetDownloadUrl, onPlayWithIIN
   );
 }
 
+interface AddTaskFormProps {
+  onSubmit: (url: string) => void;
+  onCancel: () => void;
+}
+
+function AddTaskForm({ onSubmit, onCancel }: Readonly<AddTaskFormProps>) {
+  return (
+    <Form
+      actions={
+        <ActionPanel>
+          <Action.SubmitForm
+            title="添加下载"
+            icon={Icon.Plus}
+            onSubmit={(values: { url: string }) => onSubmit(values.url)}
+          />
+          <Action title="取消" icon={Icon.XMarkCircle} onAction={onCancel} />
+        </ActionPanel>
+      }
+    >
+      <Form.TextField
+        id="url"
+        title="下载链接"
+        placeholder="输入 http、https 或磁力链接"
+        autoFocus
+      />
+      <Form.Description text="支持 HTTP/HTTPS 链接和磁力链接（magnet:）" />
+    </Form>
+  );
+}
